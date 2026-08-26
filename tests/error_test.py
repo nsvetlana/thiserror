@@ -1,6 +1,7 @@
 import traceback
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 import pytest
 
@@ -118,3 +119,51 @@ def test_messages_stored_verbatim_without_declaration_execution():
     assert isinstance(disconnect_message, str)
     assert disconnect_message == "data store disconnected"
     assert callable(DataStoreError.Redaction.value.message)
+
+
+class FormatStoreError(Error):
+    Disconnected = Variant(OSError, "data store disconnected")
+    Key = Variant(str, "the data for key `{0}` is not available")
+    Header = Variant(
+        InvalidHeaderFields,
+        "invalid header (expected {expected}, found {found})",
+    )
+    Unit = Variant((), "unit variant engaged")
+
+
+def test_format_string_templates_render_from_payload():
+    assert str(FormatStoreError.Key("k9")) == "the data for key `k9` is not available"
+    assert str(
+        FormatStoreError.Header(InvalidHeaderFields(expected="a", found="b"))
+    ) == "invalid header (expected a, found b)"
+    assert str(FormatStoreError.Disconnected(OSError())) == "data store disconnected"
+    assert str(FormatStoreError.Unit()) == "unit variant engaged"
+    err = FormatStoreError.Key("k9")
+    assert err[0] == "k9"
+    assert len(err) == 1
+    assert FormatStoreError.Header.value.template.endswith("{found})")
+
+
+def test_live_fallback_when_lambda_not_statically_expressible():
+    shout_template = Variant(str, lambda self: f"{self[0].upper()}!")
+    assert str(shout_template("k9")) == "K9!"
+
+
+def test_format_templates_still_raise_match_and_chain():
+    orig = OSError("disk offline")
+    try:
+        raise FormatStoreError.Disconnected(orig)
+    except BaseException as exc:  # noqa: BLE001 - raised variants are BaseException by contract
+        caught = exc
+    assert caught.__cause__ is orig
+    # Value patterns are a runtime mechanism; the checker cannot narrow a
+    # BaseException subject against enum members, so keep it dynamically typed.
+    subject: Any = caught
+    matched = False
+    payload = None
+    match subject:
+        case FormatStoreError.Disconnected:
+            matched = True
+            payload = subject.value
+    assert matched
+    assert payload is orig

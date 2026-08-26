@@ -7,19 +7,44 @@ from enum import Enum
 from typing import Any, overload
 
 
+class _TemplatePath:
+    """Declaration-time probe converting attribute/index access into
+    ``str.format`` field references — Rust ``#[error("{0} …")]`` parity."""
+
+    __slots__ = ("_path",)
+
+    def __init__(self, path: str = "") -> None:
+        self._path = path
+
+    def __getitem__(self, key: Any) -> _TemplatePath:
+        segment = repr(key) if isinstance(key, str) else str(key)
+        return _TemplatePath(f"{self._path}[{segment}]" if self._path else segment)
+
+    def __getattr__(self, name: str) -> _TemplatePath:
+        return _TemplatePath(f"{self._path}.{name}" if self._path else name)
+
+    def __format__(self, format_spec: str) -> str:
+        suffix = f":{format_spec}" if format_spec else ""
+        return f"{{{self._path}{suffix}}}"
+
+
 class Variant[T]:
     """Declarative error variant: a payload schema plus a message.
 
     Assigned as a class attribute on an :class:`Error` subclass it becomes an
     enum member whose value is this Variant instance; calling the member builds
-    a raisable :class:`TypedVariant`. The message is stored verbatim — static
-    string or callable receiving the raised instance — and executes only when an
-    instance exists. The overloads keep the expected callable unambiguous so IDEs
+    a raisable :class:`TypedVariant`. Callables are probed once at declaration
+    against :class:`_TemplatePath`: lambdas reducible to pure field/index access
+    become ``str.format`` templates (rendered from the payload at raise time),
+    anything richer falls back to live rendering with the raised instance as
+    ``self``. The overloads keep the expected callable unambiguous so IDEs
     infer lambda ``self`` from the schema.
     """
 
     schema: type[T] | tuple[Any, ...]
     message: str | Callable[[Any], str]
+    template: str
+    _factory: Callable[[Any], str] | None
 
     @overload
     def __init__(
@@ -41,6 +66,18 @@ class Variant[T]:
     ) -> None:
         self.schema = schema
         self.message = message
+        if isinstance(message, str):
+            self.template = message
+            self._factory = None
+            return
+        try:
+            probe_target: Any = _TemplatePath()
+            self.template = message(probe_target)
+        except Exception:  # noqa: BLE001 - any failure means "not statically expressible"
+            self.template = ""
+            self._factory = message
+        else:
+            self._factory = None
 
     def __call__(self, *values: Any) -> TypedVariant[T]:
         if isinstance(self.schema, tuple):
@@ -56,6 +93,22 @@ class Variant[T]:
                 f" argument, got {len(values)}"
             )
         return TypedVariant(self, *values)
+
+    def render(self, instance: TypedVariant[T]) -> str:
+        """Render the message for a raised instance.
+
+        Template mode interpolates the payload positionally (slot 0) and, when
+        the payload exposes attributes, as named fields; live mode delegates to
+        the stored callable with the raised instance itself.
+        """
+        factory = self._factory
+        if factory is not None:
+            return factory(instance)
+        value = instance.value
+        if value is None:
+            return self.template.format()
+        fields: dict[str, Any] = getattr(value, "__dict__", None) or {}
+        return self.template.format(value, **fields)
 
 
 class TypedVariant[T](BaseException):
@@ -75,10 +128,7 @@ class TypedVariant[T](BaseException):
             self.__cause__ = self.value
 
     def __str__(self) -> str:
-        message = self._variant.message
-        if isinstance(message, str):
-            return message
-        return message(self)
+        return self._variant.render(self)
 
     def __repr__(self) -> str:
         if self.value is None:
