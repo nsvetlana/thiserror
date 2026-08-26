@@ -16,7 +16,7 @@ class InvalidHeaderFields:
 # Where Error and Variant are provided by the package.
 class DataStoreError(Error):
     # Static variants safely ingest explicit strings directly
-    Disconnect = Variant(IOError, "data store disconnected")
+    Disconnect = Variant(OSError, "data store disconnected")
     # Lambda provides standard list to formatting context via self[0]
     Redaction = Variant(str, lambda self: f"the data for key `{self[0]}` is not available")
     # IDE fully autocompletes '.expected' and '.found' here because self is inferred as InvalidHeaderFields
@@ -28,13 +28,13 @@ class DataStoreError(Error):
 
 
 def test_static_message_and_str():
-    err = DataStoreError.Disconnect(IOError())
+    err = DataStoreError.Disconnect(OSError())
     assert str(err) == "data store disconnected"
     assert str(DataStoreError.Unknown()) == "unknown data store error"
     # The member's stored value IS the Variant declared in the class body,
     # carried natively as an enum member value (no coercion).
     assert isinstance(DataStoreError.Disconnect.value, Variant)
-    assert DataStoreError.Disconnect.value.schema is IOError
+    assert DataStoreError.Disconnect.value.schema is OSError
 
 
 def test_lambda_message_sequence_access():
@@ -55,7 +55,7 @@ def test_lambda_message_dataclass_attributes():
 
 
 def test_match_dispatches_by_variant():
-    orig = IOError("disk offline")
+    orig = OSError("disk offline")
     err = DataStoreError.Disconnect(orig)
 
     arm = None
@@ -79,10 +79,12 @@ def test_match_dispatches_by_variant():
 
 
 def test_traceback_preserved_via_cause():
-    orig = IOError("disk offline")
+    orig = OSError("disk offline")
     try:
         raise DataStoreError.Disconnect(orig)
-    except BaseException as exc:
+    # Raised variants are BaseException subclasses by contract; catching Exception
+    # would defeat the dispatch guarantee under test.
+    except BaseException as exc:  # noqa: BLE001
         caught = exc
 
     assert caught.__cause__ is orig
