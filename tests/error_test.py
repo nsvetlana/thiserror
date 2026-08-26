@@ -111,8 +111,6 @@ def test_value_schema_arity_enforced():
         DataStoreError.Redaction("a", "b")
 
 
-def test_declaration_time_template_rendered():
-    assert DataStoreError.Disconnect.value.template == "data store disconnected"
-    redaction_template = DataStoreError.Redaction.value.template
-    assert isinstance(redaction_template, str)
-    assert len(redaction_template) > 0
+def test_messages_stored_verbatim_without_declaration_execution():
+    assert DataStoreError.Disconnect.value.message == "data store disconnected"
+    assert callable(DataStoreError.Redaction.value.message)
