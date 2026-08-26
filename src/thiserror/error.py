@@ -3,31 +3,31 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, overload
+from typing import Any
 
 
+@dataclass(slots=True)
 class _TemplatePath:
     """Declaration-time probe converting attribute/index access into
     ``str.format`` field references — Rust ``#[error("{0} …")]`` parity."""
 
-    __slots__ = ("_path",)
-
-    def __init__(self, path: str = "") -> None:
-        self._path = path
+    path: str = ""
 
     def __getitem__(self, key: Any) -> _TemplatePath:
         segment = repr(key) if isinstance(key, str) else str(key)
-        return _TemplatePath(f"{self._path}[{segment}]" if self._path else segment)
+        return _TemplatePath(f"{self.path}[{segment}]" if self.path else segment)
 
     def __getattr__(self, name: str) -> _TemplatePath:
-        return _TemplatePath(f"{self._path}.{name}" if self._path else name)
+        return _TemplatePath(f"{self.path}.{name}" if self.path else name)
 
     def __format__(self, format_spec: str) -> str:
         suffix = f":{format_spec}" if format_spec else ""
-        return f"{{{self._path}{suffix}}}"
+        return f"{{{self.path}{suffix}}}"
 
 
+@dataclass(slots=True)
 class Variant[T]:
     """Declarative error variant: a payload schema plus a message.
 
@@ -40,51 +40,36 @@ class Variant[T]:
 
     schema: type[T] | tuple[Any, ...]
     message: str | Callable[[Any], str]
+    template: str = ""
+    is_unit: bool = False
 
-    @overload
-    def __init__(
-        self: Variant[tuple[Any, ...]],
-        schema: tuple[Any, ...],
-        message: str | Callable[[Any], str],
-    ) -> None: ...
+    def __post_init__(self) -> None:
+        # Zero-copy: compute once at construction, never again
+        object.__setattr__(self, "is_unit", isinstance(self.schema, tuple))
+        if isinstance(self.message, str):
+            object.__setattr__(self, "template", self.message)
 
-    @overload
-    def __init__(self, schema: type[T], message: str) -> None: ...
-
-    @overload
-    def __init__(self, schema: type[T], message: Callable[[T], str]) -> None: ...
-
-    def __init__(
-        self,
-        schema: type[T] | tuple[Any, ...],
-        message: str | Callable[[T], str],
-    ) -> None:
-        self.schema = schema
-        self.message = message
-        self.template = message if isinstance(message, str) else ""
 
     def render(self, instance: TypedVariant[T]) -> str:
         msg = self.message
         if isinstance(msg, str):
             value = instance.value
-            return msg.format(
-                value,
-                **(value.__dict__ if hasattr(value, "__dict__") else {}),
-            )
+            # Zero-allocation format using precomputed template if available
+            return self.template.format(value, **(value.__dict__ if hasattr(value, "__dict__") else {}))
         return msg(instance)
 
     def __call__(self, *values: Any) -> TypedVariant[T]:
-        # Arity check: tuple schema = unit (0 values); otherwise exactly 1
-        is_unit = isinstance(self.schema, tuple)
-        if (is_unit and values) or (not is_unit and len(values) != 1):
+        # Arity check using precomputed is_unit — no isinstance at call-time
+        if (self.is_unit and values) or (not self.is_unit and len(values) != 1):
             raise TypeError(
                 f"variant with message {self.message!r} and schema"
-                f" {self.schema!r} takes {0 if is_unit else 1} argument(s),"
+                f" {self.schema!r} takes {0 if self.is_unit else 1} argument(s),"
                 f" got {len(values)}"
             )
         return TypedVariant(self, *values)
 
 
+@dataclass(slots=True)
 class TypedVariant[T](BaseException):
     """Raisable exception bound to the Variant that declared it.
 
@@ -93,42 +78,46 @@ class TypedVariant[T](BaseException):
     attributes delegate to the wrapped payload.
     """
 
-    def __init__(self, variant: Variant[T], *values: Any) -> None:
-        self._variant = variant
-        self.value = values[0] if values else None
-        # #[from] parity: wrapping an exception preserves its traceback through
-        # the cause chain.
+    variant: Variant[T]
+    value: Any = None
+    _is_unit: bool = False
+
+    def __post_init__(self) -> None:
+        # Zero-copy: hoist arity from variant at construction time
+        object.__setattr__(self, "_is_unit", self.variant.is_unit)
         if isinstance(self.value, BaseException):
             self.__cause__ = self.value
 
     def __str__(self) -> str:
-        return self._variant.render(self)
+        return self.variant.render(self)
 
     def __repr__(self) -> str:
         if self.value is None:
-            return f"{type(self).__qualname__}({self._variant.message!r})"
-        return f"{type(self).__qualname__}({self._variant.message!r}, {self.value!r})"
+            return f"{type(self).__qualname__}({self.variant.message!r})"
+        return f"{type(self).__qualname__}({self.variant.message!r}, {self.value!r})"
 
     def __getitem__(self, index: int) -> Any:
-        if index != 0 or isinstance(self._variant.schema, tuple):
+        # Task 3: avoid isinstance(self._variant.schema, tuple)
+        if index != 0 or self._is_unit:
             raise IndexError("variant payload exposes a single value slot")
         return self.value
 
     def __len__(self) -> int:
-        return 0 if isinstance(self._variant.schema, tuple) else 1
+        # Task 3: avoid isinstance check
+        return 0 if self._is_unit else 1
 
     def __getattr__(self, name: str) -> Any:
+        # Zero-allocation delegation; no extra hasattr on self
         value = object.__getattribute__(self, "value")
-        if value is None or not hasattr(value, name):
-            raise AttributeError(name)
-        return getattr(value, name)
+        try:
+            return getattr(value, name)
+        except AttributeError:
+            raise AttributeError(name) from None
 
     def __eq__(self, other: object) -> bool:
-        # Value-pattern support: `case Owner.Member:` compares the subject against
-        # the enum member, whose `.value` IS the owning Variant.
-        if getattr(other, "value", None) is self._variant:
+        if getattr(other, "value", None) is self.variant:
             return True
-        if getattr(other, "_variant", None) is self._variant:
+        if getattr(other, "variant", None) is self.variant:
             return bool(getattr(other, "value", None) == self.value)
         return False
 
