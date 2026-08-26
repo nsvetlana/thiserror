@@ -9,25 +9,6 @@ from typing import Any
 
 
 @dataclass(slots=True)
-class _TemplatePath:
-    """Declaration-time probe converting attribute/index access into
-    ``str.format`` field references — Rust ``#[error("{0} …")]`` parity."""
-
-    path: str = ""
-
-    def __getitem__(self, key: Any) -> _TemplatePath:
-        segment = repr(key) if isinstance(key, str) else str(key)
-        return _TemplatePath(f"{self.path}[{segment}]" if self.path else segment)
-
-    def __getattr__(self, name: str) -> _TemplatePath:
-        return _TemplatePath(f"{self.path}.{name}" if self.path else name)
-
-    def __format__(self, format_spec: str) -> str:
-        suffix = f":{format_spec}" if format_spec else ""
-        return f"{{{self.path}{suffix}}}"
-
-
-@dataclass(slots=True)
 class Variant[T]:
     """Declarative error variant: a payload schema plus a message.
 
@@ -49,12 +30,11 @@ class Variant[T]:
         if isinstance(self.message, str):
             object.__setattr__(self, "template", self.message)
 
-
     def render(self, instance: TypedVariant[T]) -> str:
         msg = self.message
         if isinstance(msg, str):
             value = instance.value
-            # Zero-allocation format using precomputed template if available
+            # Zero-allocation format using precomputed template
             return self.template.format(value, **(value.__dict__ if hasattr(value, "__dict__") else {}))
         return msg(instance)
 
@@ -97,7 +77,7 @@ class TypedVariant[T](BaseException):
         return f"{type(self).__qualname__}({self.variant.message!r}, {self.value!r})"
 
     def __getitem__(self, index: int) -> Any:
-        # Task 3: avoid isinstance(self._variant.schema, tuple)
+        # Task 3: avoid isinstance(self.variant.schema, tuple)
         if index != 0 or self._is_unit:
             raise IndexError("variant payload exposes a single value slot")
         return self.value
