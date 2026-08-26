@@ -81,6 +81,8 @@ class TypedVariant[T](BaseException):
         return message(self)
 
     def __repr__(self) -> str:
+        if self.value is None:
+            return f"{type(self).__qualname__}({self._variant.message!r})"
         return f"{type(self).__qualname__}({self._variant.message!r}, {self.value!r})"
 
     def __getitem__(self, index: int) -> Any:
