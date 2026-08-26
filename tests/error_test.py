@@ -112,5 +112,7 @@ def test_value_schema_arity_enforced():
 
 
 def test_messages_stored_verbatim_without_declaration_execution():
-    assert DataStoreError.Disconnect.value.message == "data store disconnected"
+    disconnect_message = DataStoreError.Disconnect.value.message
+    assert isinstance(disconnect_message, str)
+    assert disconnect_message == "data store disconnected"
     assert callable(DataStoreError.Redaction.value.message)

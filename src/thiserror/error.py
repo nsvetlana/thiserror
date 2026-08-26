@@ -52,7 +52,7 @@ class Variant[T]:
         elif len(values) != 1:
             raise TypeError(
                 f"variant with message {self.message!r} and schema"
-                f" {getattr(self.schema, '__name__', self.schema)!r} takes exactly one"
+                f" {self.schema!r} takes exactly one"
                 f" argument, got {len(values)}"
             )
         return TypedVariant(self, *values)
