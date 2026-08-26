@@ -33,18 +33,13 @@ class Variant[T]:
 
     Assigned as a class attribute on an :class:`Error` subclass it becomes an
     enum member whose value is this Variant instance; calling the member builds
-    a raisable :class:`TypedVariant`. Callables are probed once at declaration
-    against :class:`_TemplatePath`: lambdas reducible to pure field/index access
-    become ``str.format`` templates (rendered from the payload at raise time),
-    anything richer falls back to live rendering with the raised instance as
-    ``self``. The overloads keep the expected callable unambiguous so IDEs
-    infer lambda ``self`` from the schema.
+    a raisable :class:`TypedVariant`. Static strings render verbatim via
+    ``str.format`` from the payload at raise time; callables render live
+    with the raised instance as ``self``.
     """
 
     schema: type[T] | tuple[Any, ...]
     message: str | Callable[[Any], str]
-    template: str
-    _factory: Callable[[Any], str] | None
 
     @overload
     def __init__(
@@ -66,49 +61,28 @@ class Variant[T]:
     ) -> None:
         self.schema = schema
         self.message = message
-        if isinstance(message, str):
-            self.template = message
-            self._factory = None
-            return
-        try:
-            probe_target: Any = _TemplatePath()
-            self.template = message(probe_target)
-        except Exception:  # noqa: BLE001 - any failure means "not statically expressible"
-            self.template = ""
-            self._factory = message
-        else:
-            self._factory = None
-
-    def __call__(self, *values: Any) -> TypedVariant[T]:
-        if isinstance(self.schema, tuple):
-            if values:
-                raise TypeError(
-                    f"unit variant with message {self.message!r} takes no arguments,"
-                    f" got {len(values)}"
-                )
-        elif len(values) != 1:
-            raise TypeError(
-                f"variant with message {self.message!r} and schema"
-                f" {self.schema!r} takes exactly one"
-                f" argument, got {len(values)}"
-            )
-        return TypedVariant(self, *values)
+        self.template = message if isinstance(message, str) else ""
 
     def render(self, instance: TypedVariant[T]) -> str:
-        """Render the message for a raised instance.
+        msg = self.message
+        if isinstance(msg, str):
+            value = instance.value
+            return msg.format(
+                value,
+                **(value.__dict__ if hasattr(value, "__dict__") else {}),
+            )
+        return msg(instance)
 
-        Template mode interpolates the payload positionally (slot 0) and, when
-        the payload exposes attributes, as named fields; live mode delegates to
-        the stored callable with the raised instance itself.
-        """
-        factory = self._factory
-        if factory is not None:
-            return factory(instance)
-        value = instance.value
-        if value is None:
-            return self.template.format()
-        fields: dict[str, Any] = getattr(value, "__dict__", None) or {}
-        return self.template.format(value, **fields)
+    def __call__(self, *values: Any) -> TypedVariant[T]:
+        # Arity check: tuple schema = unit (0 values); otherwise exactly 1
+        is_unit = isinstance(self.schema, tuple)
+        if (is_unit and values) or (not is_unit and len(values) != 1):
+            raise TypeError(
+                f"variant with message {self.message!r} and schema"
+                f" {self.schema!r} takes {0 if is_unit else 1} argument(s),"
+                f" got {len(values)}"
+            )
+        return TypedVariant(self, *values)
 
 
 class TypedVariant[T](BaseException):
