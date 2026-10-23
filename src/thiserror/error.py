@@ -159,17 +159,15 @@ class TypedVariant[PayloadT](Exception):
         return f"{type(self).__qualname__}({self.variant.message!r}, {self._payload!r})"
 
     def __getitem__(self, index: int) -> PayloadT:
-        # Task 3: avoid isinstance(self.variant.schema, tuple)
         if index != 0 or self._is_unit:
             raise IndexError("variant payload exposes a single value slot")
         return self.value
 
     def __len__(self) -> int:
-        # Task 3: avoid isinstance check
         return 0 if self._is_unit else 1
 
     def __getattr__(self, name: str) -> Any:
-        # Zero-allocation delegation; no extra hasattr on self
+        # Bypass __getattr__ to avoid recursion while resolving the payload.
         value = object.__getattribute__(self, "_payload")
         try:
             return getattr(value, name)
@@ -218,8 +216,7 @@ def _restore_variant_error(
         if is_unit:
             return _make_typed_variant(owned_variant, member)
         return _make_typed_variant(owned_variant, member, payload)
-    if variant is None:
-        raise TypeError("a standalone variant error requires its Variant")
+    assert variant is not None
     if is_unit:
         return _make_typed_variant(variant, None)
     return _make_typed_variant(variant, None, payload)
