@@ -25,9 +25,21 @@ class InvalidHeaderFields:
 
 class DataStoreError(Error):
     Disconnected = Variant(OSError, "data store disconnected")
-    Redaction = Variant.for_schema(str).message(lambda payload: f"the data for key `{payload}` is not available")
-    InvalidHeader = Variant.for_schema(InvalidHeaderFields).message(
-        lambda payload: f"invalid header (expected {payload.expected}, found {payload.found})"
+    Redaction = Variant(str, lambda payload: f"the data for key `{payload}` is not available")
+    InvalidHeader = Variant(
+        InvalidHeaderFields,
+        lambda payload: f"invalid header (expected {payload.expected}, found {payload.found})",
+    )
+    Unknown = Variant((), "unknown data store error")
+
+
+# Equivalent direct declaration, kept as a side-by-side syntax example.
+class DataStoreErrorAlt(Error):
+    Disconnected = Variant(OSError, "data store disconnected")
+    Redaction = Variant(str, lambda payload: f"the data for key `{payload}` is not available")
+    InvalidHeader = Variant(
+        InvalidHeaderFields,
+        lambda payload: f"invalid header (expected {payload.expected}, found {payload.found})",
     )
     Unknown = Variant((), "unknown data store error")
 
@@ -39,21 +51,22 @@ A member call creates a fresh `TypedVariant` exception. Payload-bearing variants
 take one value; use a dataclass when an error needs several named fields. The
 empty tuple `()` declares a unit variant.
 
-Use `Variant.for_schema(...).message(...)` for schema-typed callables. The
-configured `ty` and `zuban` checkers infer the lambda parameter and reject unknown
-payload attributes. This form passes the schema payload to the callable. Static
-strings can use the direct constructor; the legacy direct callable form remains
-available with wrapper and one-slot indexing semantics, but its lambda parameter
-is dynamically typed.
+Callable messages receive the schema payload directly. The `ty` and `zuban`
+checkers infer the lambda parameter for built-in schemas such as `str` and
+user-defined schemas such as dataclasses. `Variant` is a generic factory and
+returns a `VariantSpec[PayloadT]`; the spec is the enum member's stored value.
+The earlier schema-first builder is replaced by this call form, and callback
+parameters now refer to the payload instead of the raised wrapper.
 
 The wrapper delegates unknown attributes to the payload, and index `0` returns the
 full payload.
-Each callback is probed once at declaration. Simple access-only callbacks are
-rendered from the resulting template. Other callbacks run again when an error
-message is rendered, so keep their declaration-time probe side-effect free.
+Callable messages run when the error is rendered and receive its actual payload.
+They run again on each `str(error)` call, so keep callbacks side-effect free.
+Static string messages use `str.format`; callable f-strings return their result
+directly and do not need `str.format` brace escaping.
 
 For a typed construction path with `ty` and `zuban`, call the enum member's
-`Variant` value:
+`VariantSpec` value:
 
 ```python
 fields = InvalidHeaderFields(expected="content-type", found="x-type")
@@ -99,7 +112,7 @@ The Enum-based declaration and Python's type system leave two limits:
   with `except Exception`, then dispatch with `match`; `except DataStoreError` is
   not supported.
 - A value-pattern match does not statically narrow the subject to one variant.
-  Use a typed `TypedVariant[T]` returned from `Variant.__call__`; the enum
+  Use a typed `TypedVariant[T]` returned from `VariantSpec.__call__`; the enum
   member's `.value(payload)` calls that typed path.
 
 Payload values are not checked against their schema at runtime. A schema describes
