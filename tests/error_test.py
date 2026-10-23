@@ -6,7 +6,7 @@ from typing import Any, assert_type
 
 import pytest
 
-from thiserror import Error, TypedVariant, Variant
+from thiserror import Error, TypedVariant, Variant, VariantSpec
 
 
 @dataclass(frozen=True)
@@ -34,19 +34,15 @@ class ValueFieldPayload:
     value: str
 
 
-INVALID_HEADER_VARIANT = Variant.for_schema(InvalidHeaderFields).message(
-    lambda self: f"invalid header (expected {assert_type(self.expected, str)}, found {self.found})"
-)
-
-
 # Where Error and Variant are provided by the package.
 class DataStoreError(Error):
     # Static variants safely ingest explicit strings directly
     Disconnect = Variant(OSError, "data store disconnected")
-    # The direct callable form retains its one-slot wrapper semantics.
-    Redaction = Variant(str, lambda self: f"the data for key `{self[0]}` is not available")
-    # IDE fully autocompletes '.expected' and '.found' here because self is inferred as InvalidHeaderFields
-    InvalidHeader = INVALID_HEADER_VARIANT
+    Redaction = Variant(str, lambda payload: f"the data for key `{payload}` is not available")
+    InvalidHeader = Variant(
+        InvalidHeaderFields,
+        lambda payload: f"invalid header (expected {payload.expected}, found {payload.found})",
+    )
     Unknown = Variant((), "unknown data store error")
 
 
@@ -64,7 +60,7 @@ def test_static_message_and_str():
     assert str(DataStoreError.Unknown()) == "unknown data store error"
     # The member's stored value IS the Variant declared in the class body,
     # carried natively as an enum member value (no coercion).
-    assert isinstance(DataStoreError.Disconnect.value, Variant)
+    assert isinstance(DataStoreError.Disconnect.value, VariantSpec)
     assert DataStoreError.Disconnect.value.schema is OSError
 
 
@@ -97,16 +93,13 @@ def test_lambda_message_dataclass_attributes():
     fields = InvalidHeaderFields(expected="a", found="b")
     err = DataStoreError.InvalidHeader(fields)
     typed_member_err: TypedVariant[InvalidHeaderFields] = DataStoreError.InvalidHeader.value(fields)
+    assert_type(typed_member_err, TypedVariant[InvalidHeaderFields])
     assert_type(typed_member_err.value, InvalidHeaderFields)
-    typed_err = INVALID_HEADER_VARIANT(fields)
-    assert_type(typed_err, TypedVariant[InvalidHeaderFields])
-    assert_type(typed_err.value, InvalidHeaderFields)
     typed_match = False
-    typed_subject: Any = typed_err
+    typed_subject: Any = err
     match typed_subject:
         case DataStoreError.InvalidHeader:
             typed_match = True
-            assert_type(typed_err.value, InvalidHeaderFields)
     assert typed_match
     assert str(err) == "invalid header (expected a, found b)"
     assert err.expected == "a"
@@ -114,50 +107,55 @@ def test_lambda_message_dataclass_attributes():
     assert err.value is fields
 
 
-def test_schema_typed_callable_receives_payload_without_wrapper_collisions():
-    variant = Variant.for_schema(ValueFieldPayload).message(lambda payload: assert_type(payload.value, str))
+def test_direct_variant_constructor_passes_schema_payload():
+    variant = Variant(
+        ValueFieldPayload,
+        lambda payload: payload.value,
+    )
     error = variant(ValueFieldPayload(value="payload field"))
 
     assert str(error) == "payload field"
 
 
+def test_direct_variant_constructor_renders_builtin_payload():
+    variant = Variant(str, lambda payload: f"redacted: {payload}")
+    error = variant("secret")
+
+    assert str(error) == "redacted: secret"
+
+
+def test_direct_callable_evaluates_payload_dependent_branches_at_render_time():
+    variant = Variant(
+        type(None),
+        lambda payload: "no payload" if payload is None else f"payload: {payload}",
+    )
+
+    assert str(variant(None)) == "no payload"
+
+
 def test_schema_typed_callable_uses_payload_indexing():
-    variant = Variant.for_schema(str).message(lambda payload: assert_type(payload, str)[1])
+    variant = Variant(str, lambda payload: payload[1])
     error = variant("key")
 
     assert str(error) == "e"
 
 
-def test_simple_callable_is_probed_once_then_rendered_as_a_template():
+def test_callable_runs_only_when_the_error_is_rendered():
     evaluations: list[str] = []
 
     def render(payload: str) -> str:
         evaluations.append("called")
         return f"value: {payload}"
 
-    variant = Variant.for_schema(str).message(render)
-    assert evaluations == ["called"]
+    variant = Variant(str, render)
+    assert evaluations == []
 
     error = variant("key")
 
     assert str(error) == "value: key"
     assert evaluations == ["called"]
-
-
-def test_legacy_callable_uses_wrapper_slots_and_caches_pure_messages():
-    evaluations: list[str] = []
-
-    def render(wrapper: Any) -> str:
-        evaluations.append("called")
-        return f"value: {wrapper[0]}"
-
-    variant = Variant(str, render)
-    assert evaluations == ["called"]
-    assert str(variant("key")) == "value: key"
-    assert evaluations == ["called"]
-
-    live_variant = Variant(str, lambda wrapper: f"{wrapper[0].upper()}!")
-    assert str(live_variant("k9")) == "K9!"
+    assert str(error) == "value: key"
+    assert evaluations == ["called", "called"]
 
 
 def test_match_dispatches_by_variant():
@@ -311,7 +309,9 @@ def test_format_string_templates_render_from_payload():
     err = FormatStoreError.Key("k9")
     assert err[0] == "k9"
     assert len(err) == 1
-    assert FormatStoreError.Header.value.template.endswith("{found})")
+    header_message = FormatStoreError.Header.value.message
+    assert isinstance(header_message, str)
+    assert header_message.endswith("{found})")
 
 
 def test_named_templates_read_fields_from_slotted_dataclasses():
@@ -327,22 +327,20 @@ def test_named_templates_skip_dataclass_init_only_values():
     assert str(error) == "invalid payload value:ignored"
 
 
-def test_live_fallback_when_lambda_not_statically_expressible():
-    shout_template = Variant.for_schema(str).message(lambda payload: f"{payload.upper()}!")
-    assert str(shout_template("k9")) == "K9!"
-
-
-def test_live_fallback_keeps_the_probe_and_per_render_evaluations():
+def test_callable_methods_use_the_actual_payload_on_each_render():
     evaluations: list[str] = []
 
     def shout(payload: str) -> str:
         evaluations.append("called")
         return f"{payload.upper()}!"
 
-    shout_template = Variant.for_schema(str).message(shout)
-    assert evaluations == ["called"]
+    shout_message = Variant(str, shout)
+    error = shout_message("k9")
+    assert evaluations == []
 
-    assert str(shout_template("k9")) == "K9!"
+    assert str(error) == "K9!"
+    assert evaluations == ["called"]
+    assert str(error) == "K9!"
     assert evaluations == ["called", "called"]
 
 

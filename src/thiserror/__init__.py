@@ -1,8 +1,8 @@
 from argparse import ArgumentParser
 
-from .error import Error, TypedVariant, Variant
+from .error import Error, TypedVariant, Variant, VariantSpec
 
-__all__ = ["Error", "TypedVariant", "Variant"]
+__all__ = ["Error", "TypedVariant", "Variant", "VariantSpec"]
 
 
 def main(args: list[str] | None = None) -> None:

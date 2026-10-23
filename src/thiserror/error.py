@@ -3,83 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from contextlib import suppress
 from dataclasses import dataclass, fields
 from enum import Enum
-from typing import Any, Literal, Never, cast, overload
+from typing import Any, Never, cast, overload
 
 _UNIT_PAYLOAD = cast(Never, None)
-_PROBE_FAILED = object()
-
-
-class _Unrenderable(Exception):
-    """Signal that a message needs its live callable instead of a template."""
-
-
-class _TemplatePath:
-    """Record field access performed by an f-string without a payload instance."""
-
-    __slots__ = ("_field", "_wrapper")
-
-    def __init__(self, field: str, *, wrapper: bool) -> None:
-        self._field = field
-        self._wrapper = wrapper
-
-    def __getattr__(self, name: str) -> _TemplatePath:
-        if self._wrapper and self._field == "0":
-            if name == "value":
-                return _TemplatePath("0", wrapper=False)
-            if name in {"variant", "args", "__cause__", "__context__", "__traceback__"}:
-                raise _Unrenderable
-        return _TemplatePath(f"{self._field}.{name}", wrapper=False)
-
-    def __getitem__(self, index: object) -> _TemplatePath:
-        if self._wrapper and self._field == "0":
-            if index != 0:
-                raise _Unrenderable
-            return _TemplatePath("0", wrapper=False)
-        if isinstance(index, bool):
-            selector = str(int(index))
-        elif isinstance(index, str):
-            selector = repr(index)
-        elif isinstance(index, int):
-            selector = str(index)
-        else:
-            raise _Unrenderable
-        return _TemplatePath(f"{self._field}[{selector}]", wrapper=False)
-
-    def __call__(self, *args: object, **kwargs: object) -> Never:
-        raise _Unrenderable
-
-    def __bool__(self) -> Never:
-        raise _Unrenderable
-
-    def __eq__(self, other: object) -> Never:
-        raise _Unrenderable
-
-    def __ne__(self, other: object) -> Never:
-        raise _Unrenderable
-
-    def __str__(self) -> str:
-        return self.__format__("")
-
-    def __repr__(self) -> str:
-        if self._wrapper and self._field == "0":
-            raise _Unrenderable
-        return f"{{{self._field}!r}}"
-
-    def __format__(self, format_spec: str) -> str:
-        if self._wrapper and self._field == "0":
-            raise _Unrenderable
-        suffix = f":{format_spec}" if format_spec else ""
-        return f"{{{self._field}{suffix}}}"
-
-
-def _probe_template(message: Callable[..., str], *, wrapper: bool) -> str | None:
-    result: object = _PROBE_FAILED
-    with suppress(Exception):
-        result = message(cast(Any, _TemplatePath("0", wrapper=wrapper)))
-    return result if isinstance(result, str) else None
 
 
 def _format_fields(value: object) -> dict[str, object]:
@@ -97,93 +25,39 @@ def _format_fields(value: object) -> dict[str, object]:
         return {}
 
 
-class _VariantBuilder[PayloadT]:
-    """Bind a payload schema before giving a callable message to type checkers."""
-
-    __slots__ = ("schema",)
-
-    def __init__(self, schema: type[PayloadT]) -> None:
-        self.schema = schema
-
-    def message(self, message: Callable[[PayloadT], str]) -> Variant[PayloadT]:
-        return Variant(self.schema, message, _typed_factory=True)
-
-
 @dataclass(slots=True, eq=False, init=False)
-class Variant[PayloadT]:
-    """Declarative error variant: a payload schema plus a message.
+class VariantSpec[PayloadT]:
+    """A payload schema and message specification returned by :func:`Variant`.
 
     Assigned as a class attribute on an :class:`Error` subclass it becomes an
-    enum member whose value is this Variant instance; calling the member builds
-    a raisable :class:`TypedVariant`. Static strings render verbatim via
-    ``str.format`` from the payload at raise time. Callable messages are probed
-    for simple formatting paths and otherwise render live with their mode's
-    payload or wrapper argument.
+    enum member whose value is this specification instance; calling the member builds
+    a raisable :class:`TypedVariant`. Static strings render via ``str.format``
+    from the payload at raise time. Schema callables receive the raw payload
+    whenever the raised error is rendered.
     """
 
     schema: type[PayloadT] | tuple[()]
     message: str | Callable[..., str]
-    template: str = ""
     is_unit: bool = False
-    _factory: Callable[..., str] | None = None
-    _typed_factory: bool = False
-
-    @overload
-    def __init__(
-        self: Variant[Never],
-        schema: tuple[()],
-        message: str | Callable[..., str],
-    ) -> None: ...
-
-    @overload
-    def __init__(self, schema: type[PayloadT], message: str) -> None: ...
-
-    @overload
-    def __init__(self, schema: type[PayloadT], message: Callable[[Any], str]) -> None: ...
-
-    @overload
-    def __init__(
-        self,
-        schema: type[PayloadT],
-        message: Callable[[PayloadT], str],
-        *,
-        _typed_factory: Literal[True],
-    ) -> None: ...
 
     def __init__(
         self,
-        schema: type[PayloadT] | tuple[()],
+        schema: type[Any] | tuple[()],
         message: str | Callable[..., str],
-        *,
-        _typed_factory: bool = False,
     ) -> None:
-        self.schema = schema
+        self.schema = cast(type[PayloadT] | tuple[()], schema)
         self.message = message
         self.is_unit = isinstance(schema, tuple)
-        self._typed_factory = _typed_factory
-        self._factory = None
-        if isinstance(message, str):
-            self.template = message
-        else:
-            template = _probe_template(message, wrapper=not _typed_factory)
-            self.template = template if template is not None else ""
-            if template is None:
-                self._factory = message
-
-    @staticmethod
-    def for_schema[SchemaT](schema: type[SchemaT]) -> _VariantBuilder[SchemaT]:
-        """Bind a schema first so all supported checkers type a message lambda."""
-        return _VariantBuilder(schema)
 
     def render(self, instance: TypedVariant[PayloadT]) -> str:
-        if self._factory is not None:
-            value = instance.value if self._typed_factory else instance
-            return self._factory(value)
-        value = instance.value
-        return self.template.format(value, **_format_fields(value))
+        payload = instance.value
+        if isinstance(self.message, str):
+            return self.message.format(payload, **_format_fields(payload))
+        value = instance if self.is_unit else payload
+        return self.message(value)
 
     @overload
-    def __call__(self: Variant[Never]) -> TypedVariant[Never]: ...
+    def __call__(self: VariantSpec[Never]) -> TypedVariant[Never]: ...
 
     @overload
     def __call__(self, value: PayloadT, /) -> TypedVariant[PayloadT]: ...
@@ -192,8 +66,44 @@ class Variant[PayloadT]:
         return _make_typed_variant(self, None, *values)
 
 
+@overload
+def make_variant(
+    schema: tuple[()],
+    message: str | Callable[..., str],
+) -> VariantSpec[Never]: ...
+
+
+@overload
+def make_variant[PayloadT](schema: type[PayloadT], message: str) -> VariantSpec[PayloadT]: ...
+
+
+@overload
+def make_variant(schema: type[str], message: Callable[[str], str]) -> VariantSpec[str]: ...
+
+
+# The generic fallback remains reachable for non-str schemas; PyCharm misreads
+# the narrower overload above as shadowing it.
+# noinspection PyOverloads
+@overload
+def make_variant[PayloadT](
+    schema: type[PayloadT],
+    message: Callable[[PayloadT], str],
+) -> VariantSpec[PayloadT]: ...
+
+
+def make_variant(
+    schema: type[Any] | tuple[()],
+    message: str | Callable[..., str],
+) -> VariantSpec[Any]:
+    """Build a typed variant declaration for an error enum."""
+    return VariantSpec(schema, message)
+
+
+Variant = make_variant
+
+
 def _make_typed_variant[PayloadT](
-    variant: Variant[PayloadT],
+    variant: VariantSpec[PayloadT],
     owner: object | None,
     *values: PayloadT,
 ) -> TypedVariant[PayloadT]:
@@ -216,14 +126,14 @@ class TypedVariant[PayloadT](Exception):
     attributes delegate to the wrapped payload.
     """
 
-    variant: Variant[PayloadT]
+    variant: VariantSpec[PayloadT]
     _payload: PayloadT
     _is_unit: bool
     _owner: object | None
 
     def __init__(
         self,
-        variant: Variant[PayloadT],
+        variant: VariantSpec[PayloadT],
         payload: PayloadT,
         is_unit: bool,
         owner: object | None,
@@ -285,7 +195,7 @@ class Error(Enum):
 
     def __call__(self, *args: Any) -> Any:
         variant = self.value
-        if not isinstance(variant, Variant):
+        if not isinstance(variant, VariantSpec):
             raise TypeError(f"{self.name} is not a Variant")
         return _make_typed_variant(variant, self, *args)
 
@@ -295,7 +205,7 @@ class Error(Enum):
 
 def _restore_variant_error(
     member: object | None,
-    variant: Variant[Any] | None,
+    variant: VariantSpec[Any] | None,
     payload: object,
     is_unit: bool,
 ) -> Any:
@@ -303,7 +213,7 @@ def _restore_variant_error(
         if not isinstance(member, Enum):
             raise TypeError("the owner must be an enum member")
         owned_variant = member.value
-        if not isinstance(owned_variant, Variant):
+        if not isinstance(owned_variant, VariantSpec):
             raise TypeError("the enum member is not backed by a Variant")
         if is_unit:
             return _make_typed_variant(owned_variant, member)
