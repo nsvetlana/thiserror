@@ -46,6 +46,10 @@ class DataStoreError(Error):
     Unknown = Variant((), "unknown data store error")
 
 
+class InvalidVariantError(Error):
+    NotVariant = "not a variant"
+
+
 def _call_error_member(member: Error, *args: Any) -> Any:
     return member(*args)
 
@@ -58,6 +62,7 @@ def test_static_message_and_str():
     err = DataStoreError.Disconnect(OSError())
     assert str(err) == "data store disconnected"
     assert str(DataStoreError.Unknown()) == "unknown data store error"
+    assert repr(DataStoreError.Unknown()) == "TypedVariant('unknown data store error')"
     # The member's stored value IS the Variant declared in the class body,
     # carried natively as an enum member value (no coercion).
     assert isinstance(DataStoreError.Disconnect.value, VariantSpec)
@@ -87,6 +92,10 @@ def test_lambda_message_sequence_access():
     assert err[0] == "k9"
     assert len(err) == 1
     assert err.value == "k9"
+    with pytest.raises(IndexError):
+        _ = err[1]
+    with pytest.raises(IndexError):
+        _ = DataStoreError.Unknown()[0]
 
 
 def test_lambda_message_dataclass_attributes():
@@ -160,26 +169,19 @@ def test_callable_runs_only_when_the_error_is_rendered():
 
 def test_match_dispatches_by_variant():
     orig = OSError("disk offline")
-    err = DataStoreError.Disconnect(orig)
-
-    arm = None
+    errors = (DataStoreError.Disconnect(orig), DataStoreError.Unknown())
+    matched_arms: list[str] = []
     payload = None
-    match err:
-        case DataStoreError.Disconnect:
-            arm = "Disconnect"
-            payload = err.value
-        case DataStoreError.Unknown:
-            arm = "Unknown"
+    for err in errors:
+        match err:
+            case DataStoreError.Disconnect:
+                matched_arms.append("Disconnect")
+                payload = err.value
+            case DataStoreError.Unknown:
+                matched_arms.append("Unknown")
 
-    assert arm == "Disconnect"
+    assert matched_arms == ["Disconnect", "Unknown"]
     assert payload is orig
-
-    unknown_hit = False
-    match DataStoreError.Unknown():
-        case DataStoreError.Unknown:
-            unknown_hit = True
-
-    assert unknown_hit
 
 
 def test_equal_variant_errors_do_not_expose_inconsistent_hashes():
@@ -187,8 +189,15 @@ def test_equal_variant_errors_do_not_expose_inconsistent_hashes():
     second = DataStoreError.Redaction("same")
 
     assert first == second
+    assert first != DataStoreError.Redaction("different")
+    assert first != object()
     with pytest.raises(TypeError):
         _hash_runtime(first)
+
+
+def test_error_enum_rejects_non_variant_members():
+    with pytest.raises(TypeError, match="NotVariant is not a Variant"):
+        _call_error_member(InvalidVariantError.NotVariant)
 
 
 def test_pickled_variants_keep_their_enum_match_identity():
@@ -210,6 +219,28 @@ def test_pickled_variants_keep_their_enum_match_identity():
     assert unit_matched
     assert str(payload_error) == "the data for key `key` is not available"
     assert str(unit_error) == "unknown data store error"
+
+
+def test_standalone_variants_round_trip_through_pickle():
+    value_spec = Variant(str, "value: {0}")
+    unit_spec = Variant((), "empty")
+
+    restored_value = pickle.loads(pickle.dumps(value_spec("payload")))
+    restored_unit = pickle.loads(pickle.dumps(unit_spec()))
+
+    assert str(restored_value) == "value: payload"
+    assert str(restored_unit) == "empty"
+
+
+def test_pickle_restore_rejects_invalid_state():
+    variant = Variant(str, "value: {0}")
+    invalid_owner = TypedVariant(variant, "payload", False, "not an enum")
+    invalid_enum_member = TypedVariant(variant, "payload", False, InvalidVariantError.NotVariant)
+
+    with pytest.raises(TypeError, match="owner must be an enum member"):
+        pickle.loads(pickle.dumps(invalid_owner))
+    with pytest.raises(TypeError, match="not backed by a Variant"):
+        pickle.loads(pickle.dumps(invalid_enum_member))
 
 
 def test_traceback_preserved_via_cause():
