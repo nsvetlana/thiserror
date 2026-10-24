@@ -38,8 +38,7 @@ except TypedVariant as caught:
 try:
     raise DataStoreError.Disconnected(OSError("disk offline"))
 except TypedVariant as error:
-    variant_error = error
-    match variant_error:
+    match error:
         case DataStoreError.Disconnected:
             print(error)
         case DataStoreError.Unknown:
