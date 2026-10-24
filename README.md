@@ -1,11 +1,9 @@
 # thiserror
 
-Declare error variants with payload schemas and messages. The package requires
-Python 3.12 or newer and is inspired by Rust's [thiserror](https://docs.rs/thiserror).
+Declare error variants with typed payloads and messages for Python 3.12 and newer.
+Inspired by Rust's [thiserror](https://docs.rs/thiserror).
 
-Install a checkout with `python -m pip install .`.
-
-## Example
+## Quick start
 
 ```python
 from dataclasses import dataclass
@@ -30,22 +28,66 @@ class DataStoreError(Error):
 
 
 fields = InvalidHeaderFields(expected="content-type", found="x-type")
-error: TypedVariant[InvalidHeaderFields] = DataStoreError.InvalidHeader.value(fields)
+header_error: TypedVariant[InvalidHeaderFields] = DataStoreError.InvalidHeader.value(fields)
 
 try:
-    raise error
-except Exception as caught:
+    raise header_error
+except TypedVariant as caught:
     print(caught)
+
+try:
+    raise DataStoreError.Disconnected(OSError("disk offline"))
+except TypedVariant as error:
+    variant_error = error
+    match variant_error:
+        case DataStoreError.Disconnected:
+            print(error)
+        case DataStoreError.Unknown:
+            print(error)
 ```
 
-## Behavior and typing
+The example prints the invalid-header message, then `data store disconnected`.
+Install this checkout with `python -m pip install .`.
 
-- `Variant(schema, message)` creates a `VariantSpec[PayloadT]` stored as the enum member's value. `()` declares a unit variant; other variants take one payload.
-- Payload callbacks receive the raw payload and run each time `str(error)` is called. Unit callbacks receive the `TypedVariant` wrapper. Keep callbacks side-effect free.
-- Static string messages use `str.format`, with positional `{0}` and named payload fields. Callable f-strings return their result directly.
-- Use the enum member's `.value(payload)` path and annotate the result as `TypedVariant[PayloadT]` for a statically typed construction. Calling the member directly is supported at runtime, but Python's Enum typing leaves that call dynamically typed.
-- `TypedVariant` derives from `Exception`. The `Error` enum itself is not an exception class, so `except DataStoreError` is unsupported. Value-pattern `match` dispatch works at runtime but does not statically narrow the matched value.
-- Exception payloads become `__cause__`, with their traceback retained. Schemas describe static types; they do not validate payloads at runtime.
+## Match mechanics
 
-The package uses inline annotations. Its `py.typed` marker opts the installed
-package into PEP 561 type checking so type checkers can use those annotations.
+`case DataStoreError.Disconnected` is a dotted value pattern. Python compares the
+subject with that enum member using `==`; a bare name such as `Disconnected`
+would instead capture the subject and match every value. `TypedVariant` equality
+connects a raised wrapper to the enum member whose `VariantSpec` it carries, so
+the example dispatches at runtime. The first matching case runs. Equality uses
+`VariantSpec` identity: reusing one spec object across different `Error` enums
+shares its match identity. Declare a fresh `Variant(...)` when those enums must
+remain distinct.
+
+Calling an enum member creates a `TypedVariant` exception. Catch it with
+`except TypedVariant` or a broader handler such as `except Exception`;
+`DataStoreError` is an enum, not an exception class, so `except DataStoreError`
+is unsupported. A broader `except Exception` handler also runs, but Zuban flags
+the enum-pattern arms as unreachable when it sees the subject's static type as
+`Exception`. Catching `TypedVariant` lets the same value patterns
+pass ty, Zuban, and PyCharm, but their refinement differs: ty keeps the subject
+as `TypedVariant[Unknown]`, while Zuban treats a matched subject as the
+enum-member literal, not as `TypedVariant[PayloadT]`. Neither checker supplies
+the correct payload type in the arm or checks exhaustiveness. Widening a broad
+handler's subject to `object` silences Zuban's warning but ty treats those arms
+as `Never`; it is not a type-safe workaround. Keep a `TypedVariant[PayloadT]`
+value from `.value(payload)` when the payload type matters. Rust enum matching
+can narrow payloads and check exhaustiveness.
+
+## Messages and typing
+
+`Variant(schema, message)` stores a `VariantSpec[PayloadT]` on the enum member.
+Payload variants take one value; `Variant((), message)` declares a unit variant.
+String messages use `str.format`. A callable message receives the raw payload
+and runs on each `str(error)` call; for a unit variant it receives the raised
+wrapper. Keep callbacks side-effect free. Exception payloads are retained as
+`__cause__`.
+
+Use the member's `.value(payload)` path when the constructed
+`TypedVariant[PayloadT]` type matters. Calling the enum member directly is
+supported at runtime, but its return type is dynamic to Python's Enum typing.
+Schemas describe static payload types; they do not validate values at runtime.
+The package ships inline annotations and `py.typed` for PEP 561 type checkers.
+
+For the public API, see the [source docstrings](src/thiserror/error.py).
