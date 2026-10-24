@@ -105,7 +105,7 @@ def test_lambda_message_dataclass_attributes():
     assert_type(typed_member_err, TypedVariant[InvalidHeaderFields])
     assert_type(typed_member_err.value, InvalidHeaderFields)
     typed_match = False
-    typed_subject: Any = err
+    typed_subject: object = err
     match typed_subject:
         case DataStoreError.InvalidHeader:
             typed_match = True
