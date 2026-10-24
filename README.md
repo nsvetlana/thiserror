@@ -28,7 +28,7 @@ class DataStoreError(Error):
 
 
 fields = InvalidHeaderFields(expected="content-type", found="x-type")
-header_error: TypedVariant[InvalidHeaderFields] = DataStoreError.InvalidHeader.value(fields)
+header_error = DataStoreError.InvalidHeader.value(fields)
 
 try:
     raise header_error
@@ -86,6 +86,12 @@ wrapper. Keep callbacks side-effect free. Exception payloads are retained as
 Use the member's `.value(payload)` path when the constructed
 `TypedVariant[PayloadT]` type matters. Calling the enum member directly is
 supported at runtime, but its return type is dynamic to Python's Enum typing.
+The unannotated `.value(payload)` assignment is inferred as
+`TypedVariant[PayloadT]` by ty and Zuban, which also infer the inline callback's
+payload type. In PyCharm's built-in type engine, Enum-member values and inline
+callback lambda parameters may appear as `Any`; add a local annotation for the
+result and use a named callback with an annotated payload when PyCharm
+completion needs those types.
 Schemas describe static payload types; they do not validate values at runtime.
 The package ships inline annotations and `py.typed` for PEP 561 type checkers.
 
