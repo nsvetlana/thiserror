@@ -50,6 +50,17 @@ class InvalidVariantError(Error):
     NotVariant = "not a variant"
 
 
+_SHARED_VARIANT = Variant(str, "shared value: {0}")
+
+
+class SharedFirstError(Error):
+    Value = _SHARED_VARIANT
+
+
+class SharedSecondError(Error):
+    Value = _SHARED_VARIANT
+
+
 def _call_error_member(member: Error, *args: Any) -> Any:
     return member(*args)
 
@@ -219,6 +230,43 @@ def test_pickled_variants_keep_their_enum_match_identity():
     assert unit_matched
     assert str(payload_error) == "the data for key `key` is not available"
     assert str(unit_error) == "unknown data store error"
+
+
+def test_typed_member_values_keep_enum_match_identity_after_pickle():
+    original = DataStoreError.Disconnect.value(OSError("disk offline"))
+    restored = pickle.loads(pickle.dumps(original))
+
+    matched = False
+    match restored:
+        case DataStoreError.Disconnect:
+            matched = True
+
+    assert matched
+    assert isinstance(restored.value, OSError)
+    assert str(restored.value) == "disk offline"
+    assert str(restored) == "data store disconnected"
+
+
+def test_callable_typed_member_values_round_trip_through_pickle():
+    original = DataStoreError.Redaction.value("typed-key")
+    restored = pickle.loads(pickle.dumps(original))
+
+    matched = False
+    match restored:
+        case DataStoreError.Redaction:
+            matched = True
+
+    assert matched
+    assert restored.value == "typed-key"
+    assert str(restored) == "the data for key `typed-key` is not available"
+
+
+def test_typed_values_with_shared_specs_keep_shared_match_identity_after_pickle():
+    original = SharedSecondError.Value.value("payload")
+    restored = pickle.loads(pickle.dumps(original))
+
+    assert restored == SharedFirstError.Value
+    assert restored == SharedSecondError.Value
 
 
 def test_standalone_variants_round_trip_through_pickle():
