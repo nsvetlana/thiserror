@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from enum import Enum
 from typing import Any, Never, cast, overload
 
@@ -18,7 +18,7 @@ def _format_fields(value: object) -> dict[str, object]:
         except TypeError:
             pass
         else:
-            return {field.name: getattr(value, field.name) for field in dataclass_fields}
+            return {dataclass_field.name: getattr(value, dataclass_field.name) for dataclass_field in dataclass_fields}
     try:
         return vars(value)
     except TypeError:
@@ -33,12 +33,15 @@ class VariantSpec[PayloadT]:
     enum member whose value is this specification instance; calling the member builds
     a raisable :class:`TypedVariant`. Static strings render via ``str.format``
     from the payload at raise time. Schema callables receive the raw payload
-    whenever the raised error is rendered.
+    whenever the raised error is rendered. An enum member is recorded as the
+    spec's canonical owner so typed constructions retain their match identity
+    when pickled.
     """
 
     schema: type[PayloadT] | tuple[()]
     message: str | Callable[..., str]
     is_unit: bool = False
+    _owner: Enum | None = field(default=None, repr=False, compare=False)
 
     def __init__(
         self,
@@ -48,6 +51,11 @@ class VariantSpec[PayloadT]:
         self.schema = cast(type[PayloadT] | tuple[()], schema)
         self.message = message
         self.is_unit = isinstance(schema, tuple)
+        self._owner = None
+
+    def _bind_owner(self, owner: Enum) -> None:
+        if self._owner is None:
+            self._owner = owner
 
     def render(self, instance: TypedVariant[PayloadT]) -> str:
         payload = instance.value
@@ -63,7 +71,7 @@ class VariantSpec[PayloadT]:
     def __call__(self, value: PayloadT, /) -> TypedVariant[PayloadT]: ...
 
     def __call__(self, *values: PayloadT) -> TypedVariant[PayloadT]:
-        return _make_typed_variant(self, None, *values)
+        return _make_typed_variant(self, self._owner, *values)
 
 
 @overload
@@ -184,12 +192,22 @@ class TypedVariant[PayloadT](Exception):
     __hash__ = None
 
     def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
-        variant = self.variant if self._owner is None else None
-        return _restore_variant_error, (self._owner, variant, self._payload, self._is_unit)
+        # noinspection PyProtectedMember
+        owner = self._owner if self._owner is not None else self.variant._owner
+        variant = self.variant if owner is None else None
+        return _restore_variant_error, (owner, variant, self._payload, self._is_unit)
 
 
 class Error(Enum):
     """An Enum replacement class that natively supports member execution routing."""
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # Bind each spec after EnumType has created the members.
+        for member in cls.__members__.values():
+            if isinstance(member.value, VariantSpec):
+                # noinspection PyProtectedMember
+                member.value._bind_owner(member)
 
     def __call__(self, *args: Any) -> Any:
         variant = self.value
