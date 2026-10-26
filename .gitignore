@@ -5,6 +5,7 @@
 !.github
 !.python-version
 !bin
+!logo.svg
 
 # Python-generated files
 __pycache__/
