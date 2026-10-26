@@ -4,6 +4,7 @@
 !.gitignore
 !.github
 !.python-version
+!bin
 
 # Python-generated files
 __pycache__/
