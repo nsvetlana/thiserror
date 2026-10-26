@@ -1,14 +1,11 @@
 [project]
 name = "thiserror"
 version = "0.1.0"
-description = ""
+description = "Typed error variants with payload schemas and messages for Python."
 readme = "README.md"
 authors = []
 requires-python = ">=3.12"
 dependencies = []
-
-[project.scripts]
-thiserror = "thiserror:main"
 
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]
