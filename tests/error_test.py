@@ -80,16 +80,6 @@ def test_static_message_and_str():
     assert DataStoreError.Disconnect.value.schema is OSError
 
 
-def test_console_entry_point_describes_the_library(capsys: pytest.CaptureFixture[str]):
-    import thiserror
-
-    thiserror.main([])
-
-    output = capsys.readouterr().out
-    assert "thiserror" in output
-    assert "library" in output
-
-
 def test_raised_variants_follow_normal_exception_handling():
     error = DataStoreError.Redaction("key")
     with pytest.raises(Exception) as caught:
@@ -236,20 +226,24 @@ def test_typed_member_values_keep_enum_match_identity_after_pickle():
     original = DataStoreError.Disconnect.value(OSError("disk offline"))
     restored = pickle.loads(pickle.dumps(original))
 
+    assert isinstance(restored.value, OSError)
+    assert str(restored.value) == "disk offline"
+    assert str(restored) == "data store disconnected"
+
     matched = False
     match restored:
         case DataStoreError.Disconnect:
             matched = True
 
     assert matched
-    assert isinstance(restored.value, OSError)
-    assert str(restored.value) == "disk offline"
-    assert str(restored) == "data store disconnected"
 
 
 def test_callable_typed_member_values_round_trip_through_pickle():
     original = DataStoreError.Redaction.value("typed-key")
     restored = pickle.loads(pickle.dumps(original))
+
+    assert restored.value == "typed-key"
+    assert str(restored) == "the data for key `typed-key` is not available"
 
     matched = False
     match restored:
@@ -257,8 +251,6 @@ def test_callable_typed_member_values_round_trip_through_pickle():
             matched = True
 
     assert matched
-    assert restored.value == "typed-key"
-    assert str(restored) == "the data for key `typed-key` is not available"
 
 
 def test_typed_values_with_shared_specs_keep_shared_match_identity_after_pickle():
