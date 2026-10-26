@@ -2,6 +2,7 @@
 !.editorconfig
 !.gitattributes
 !.gitignore
+!.github
 !.python-version
 
 # Python-generated files
