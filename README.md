@@ -1,16 +1,16 @@
 # thiserror
 
-Declare typed error variants and messages for Python 3.12 and newer. Inspired by Rust's [thiserror](https://docs.rs/thiserror).
+Declare named error variants with payloads and readable messages, then raise and handle them with Python's normal exception flow. Inspired by Rust's [thiserror](https://docs.rs/thiserror), thiserror is for Python 3.12 and newer.
 
 ## Install
 
-Install it with `pip`:
+Install it with pip:
 
 ```shell
 pip install thiserror
 ```
 
-Or add it to a `uv`-managed project:
+Or add it to a uv-managed project:
 
 ```shell
 uv add thiserror
@@ -19,57 +19,34 @@ uv add thiserror
 ## Quick start
 
 ```python
-from dataclasses import dataclass
-
 from thiserror import Error, TypedVariant, Variant
 
 
-@dataclass(frozen=True, slots=True)
-class InvalidHeaderFields:
-    expected: str
-    found: str
+class StoreError(Error):
+    Unavailable = Variant(OSError, lambda cause: f"Store unavailable: {cause}")
 
 
-class DataStoreError(Error):
-    Disconnected = Variant(OSError, "data store disconnected")
-    Redaction = Variant(str, lambda payload: f"the data for key `{payload}` is not available")
-    InvalidHeader = Variant(
-        InvalidHeaderFields,
-        lambda payload: f"invalid header (expected {payload.expected}, found {payload.found})",
-    )
-    Unknown = Variant((), "unknown data store error")
-
-
-fields = InvalidHeaderFields(expected="content-type", found="x-type")
-header_error = DataStoreError.InvalidHeader.value(fields)
-print(header_error)
+error = StoreError.Unavailable(OSError("disk offline"))
 
 try:
-    raise DataStoreError.Disconnected(OSError("disk offline"))
+    raise error
 except TypedVariant as error:
     match error:
-        case DataStoreError.Disconnected:
+        case StoreError.Unavailable:
             print(error)
-        case DataStoreError.Unknown:
-            print(error)
+        case _:
+            print("Unexpected error:", error)
 ```
 
-Output: the invalid-header message, then `data store disconnected`.
+Expected output: `Store unavailable: disk offline`.
 
-## Handling errors
+## API
 
-Calling a variant creates a `TypedVariant` exception. Catch it with
-`except TypedVariant` or `except Exception`; the `Error` declaration itself is
-not an exception class. Dotted `match` cases dispatch variants at runtime, but
-Python does not check that every case is handled or narrow each case to its
-payload type as Rust does.
+- `Error` is the base class for declaring named variants; it is not an exception class.
+- `Variant(schema, message)` declares a variant and returns a `VariantSpec`.
+- `VariantSpec` describes the payload schema and message; assigning one to an `Error` subclass makes it a named variant.
+- Calling a named variant creates a `TypedVariant` exception. Catch it with `except TypedVariant` or `except Exception`; its payload is available as `.value`.
 
-## Messages and payloads
+String messages use `.format`: `{0}` is the payload, and fields on dataclass or object payloads can be named, such as `{path}`. A callable message receives the payload and returns the displayed text. Unit variants use `Variant((), "unavailable")` and are called without a payload; a callable message for a unit variant receives the error object. If a payload is itself an exception, the `TypedVariant` chains it as its `__cause__`.
 
-A payload variant takes one value; `Variant((), message)` declares a unit
-variant. String messages use `str.format`. A callable message receives the
-payload when the error is rendered; a unit variant callback receives the error.
-Schemas provide type hints, not runtime validation. The package ships inline
-type annotations and `py.typed`.
-
-For API details, see the [source docstrings](src/thiserror/error.py).
+Schemas are hints and do not validate payloads at runtime. Python's `match` dispatches variants, but it does not require a case for every variant.
