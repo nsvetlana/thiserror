@@ -20,13 +20,12 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Typing :: Typed",
 ]
+dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/nsvetlana/thiserror"
 Repository = "https://github.com/nsvetlana/thiserror"
 Issues = "https://github.com/nsvetlana/thiserror/issues"
-
-dependencies = []
 
 [build-system]
 requires = ["uv_build>=0.13.5,<0.14"]
