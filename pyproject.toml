@@ -1,14 +1,26 @@
 [project]
 name = "thiserror"
 version = "0.1.0"
-description = "Typed error variants with payload schemas and messages for Python."
+description = "Define typed Python error variants with pattern matching and customizable messages."
 readme = "README.md"
 authors = []
 requires-python = ">=3.12"
+keywords = ["error", "error-handling", "error-enum", "errors", "exceptions", "pattern-matching", "typed-errors", "thiserror"]
+classifiers = [
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = []
 
 [build-system]
-requires = ["uv_build>=0.12.5,<0.13.0"]
+requires = ["uv_build>=0.13.5,<0.14"]
 build-backend = "uv_build"
 
 [dependency-groups]
