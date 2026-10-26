@@ -4,7 +4,7 @@ Declare named error variants with payloads and readable messages, then raise and
 
 ## Install
 
-Install it with pip:
+Once the package is published, install it with pip:
 
 ```shell
 pip install thiserror
