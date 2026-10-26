@@ -3,7 +3,9 @@ name = "thiserror"
 version = "0.1.1"
 description = "Define typed Python error variants with pattern matching and customizable messages."
 readme = "README.md"
-authors = []
+authors = [
+  { name = "Svetlana N", email = "nsvetlana.ln@yandex.ru" },
+]
 requires-python = ">=3.12"
 keywords = ["error", "error-handling", "error-enum", "errors", "exceptions", "pattern-matching", "typed-errors", "thiserror"]
 classifiers = [
@@ -16,7 +18,14 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
   "Programming Language :: Python :: 3.15",
   "Topic :: Software Development :: Libraries :: Python Modules",
+  "Typing :: Typed",
 ]
+
+[project.urls]
+Homepage = "https://github.com/nsvetlana/thiserror"
+Repository = "https://github.com/nsvetlana/thiserror"
+Issues = "https://github.com/nsvetlana/thiserror/issues"
+
 dependencies = []
 
 [build-system]
