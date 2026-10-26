@@ -1,52 +1,155 @@
 # thiserror
 
-Declare named error variants with payloads and readable messages, then raise and handle them with Python's normal exception flow. Inspired by Rust's [thiserror](https://docs.rs/thiserror), thiserror is for Python 3.12 and newer.
+> Typed, matchable error variants for Python, inspired by Rust's [`thiserror`](https://docs.rs/thiserror/).
 
-## Install
+Define related errors in one place, attach structured payloads, and give each variant a clear message. Raise the resulting exceptions normally and handle individual variants with Python's `match` statement.
 
-Once the package is published, install it with pip:
+## Features
 
-```shell
+- **Grouped error variants:** define named variants in an `Error` subclass (an enum); calling a variant creates a raisable `TypedVariant` exception.
+- **Payload schemas:** declare one payload type per variant, or use `()` for a payload-free (unit) variant. Types are not validated at runtime.
+- **Custom messages:** use a function (such as `lambda payload: f"..."`) or a string template rendered with `str.format`.
+- **Pattern matching:** distinguish variants with qualified `case` patterns after catching a `TypedVariant` exception.
+- **Automatic exception causes:** when the payload is an exception, it is assigned to the resulting error's `__cause__`.
+
+Requires **Python 3.12+**. No third-party runtime dependencies.
+
+## Installation
+
+With [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv add thiserror
+```
+
+With pip:
+
+```bash
 pip install thiserror
 ```
 
-Or add it to a uv-managed project:
-
-```shell
-uv add thiserror
-```
 
 ## Quick start
 
 ```python
+from dataclasses import dataclass
+
 from thiserror import Error, TypedVariant, Variant
 
 
-class StoreError(Error):
-    Unavailable = Variant(OSError, lambda cause: f"Store unavailable: {cause}")
+@dataclass(frozen=True, slots=True)
+class InvalidHeaderFields:
+    expected: str
+    found: str
 
 
-error = StoreError.Unavailable(OSError("disk offline"))
+class DataStoreError(Error):
+    Disconnect = Variant(OSError, "data store disconnected")
+    Redaction = Variant(str, lambda payload: f"the data for key `{payload}` is not available")
+    InvalidHeader = Variant(
+        InvalidHeaderFields,
+        lambda payload: f"invalid header (expected {payload.expected}, found {payload.found})",
+    )
+    Unknown = Variant((), "unknown data store error")
+
+
+fields = InvalidHeaderFields(expected="content-type", found="x-type")
+header_error = DataStoreError.InvalidHeader(fields)
+print(header_error)
 
 try:
-    raise error
+    raise DataStoreError.Disconnect(OSError("disk offline"))
 except TypedVariant as error:
     match error:
-        case StoreError.Unavailable:
+        case DataStoreError.Disconnect:
             print(error)
-        case _:
-            print("Unexpected error:", error)
+        case DataStoreError.Unknown:
+            print(error)
 ```
 
-Expected output: `Store unavailable: disk offline`.
+Output:
 
-## API
+```text
+invalid header (expected content-type, found x-type)
+data store disconnected
+```
 
-- `Error` is the base class for declaring named variants; it is not an exception class.
-- `Variant(schema, message)` declares a variant and returns a `VariantSpec`.
-- `VariantSpec` describes the payload schema and message; assigning one to an `Error` subclass makes it a named variant.
-- Calling a named variant creates a `TypedVariant` exception. Catch it with `except TypedVariant` or `except Exception`; its payload is available as `.value`.
+`DataStoreError` defines the variants; **`TypedVariant` is the exception class**. Catch `TypedVariant` (or `Exception`), not `DataStoreError`.
 
-String messages use `.format`: `{0}` is the payload, and fields on dataclass or object payloads can be named, such as `{path}`. A callable message receives the payload and returns the displayed text. Unit variants use `Variant((), "unavailable")` and are called without a payload; a callable message for a unit variant receives the error object. If a payload is itself an exception, the `TypedVariant` chains it as its `__cause__`.
+## Defining variants
 
-Schemas are hints and do not validate payloads at runtime. Python's `match` dispatches variants, but it does not require a case for every variant.
+Use `Variant(schema, message)` as a member of an `Error` subclass. `Variant` is an alias for `make_variant`.
+
+```python
+class LookupError(Error):
+    Missing = Variant(str, "key {0!r} not found")
+    InvalidStatus = Variant(int, lambda status: f"invalid status: {status}")
+    Empty = Variant((), "no results available")
+
+
+assert str(LookupError.Missing("account")) == "key 'account' not found"
+assert str(LookupError.InvalidStatus(503)) == "invalid status: 503"
+assert str(LookupError.Empty()) == "no results available"
+```
+
+A variant with a payload requires **exactly one argument**. A unit variant, declared with `Variant((), message)`, takes **no arguments**. Incorrect argument counts raise `TypeError`.
+
+### Formatting messages
+
+String messages use `str.format` when the error is converted to a string:
+
+- `{0}` references the entire payload, as in `"I/O error: {0}"`.
+- `{name}` references a field of a dataclass payload or a value in a payload object's `__dict__`.
+- Python format conversions also work, such as `{0!r}` for `repr(payload)`.
+
+Alternatively, pass a callable such as `lambda payload: f"invalid: {payload}"`. This is how the quick-start example uses **f-strings**: the f-string is evaluated inside the function when the exception is rendered, not when it is created. A plain string passed to `Variant` uses **`str.format`**, not f-string interpolation. For **unit variants**, a message callable receives the `TypedVariant` instance rather than a payload.
+
+### Accessing the payload
+
+A constructed exception exposes its original payload through `.value`:
+
+```python
+error = LookupError.Missing("account")
+assert error.value == "account"
+```
+
+Unknown attributes on the exception are delegated to its payload, so structured payload fields can also be accessed directly (for example, `header_error.expected` in the quick-start example).
+
+## Catching and matching errors
+
+All constructed variants are instances of `TypedVariant`, which extends `Exception`. Match against qualified enum members to distinguish variants:
+
+```python
+try:
+    raise LookupError.Empty()
+except TypedVariant as error:
+    match error:
+        case LookupError.Missing:
+            print("Missing:", error.value)
+        case LookupError.Empty:
+            print("Nothing to return")
+        case _:
+            raise
+```
+
+If a payload is itself an exception, it is assigned to `__cause__` automatically:
+
+```python
+original = OSError("disk offline")
+error = DataStoreError.Disconnect(original)
+assert error.__cause__ is original
+```
+
+## API overview
+
+| Name                       | Description                                                                                      |
+|----------------------------|--------------------------------------------------------------------------------------------------|
+| `Error`                    | Base enum for declaring a related set of error variants. It is **not** an exception type.        |
+| `Variant(schema, message)` | Declares a variant with a payload type or `()` for no payload.                                   |
+| `TypedVariant`             | The raisable exception created by calling a declared variant. Its `.value` contains the payload. |
+
+## Limitations
+
+- **No runtime payload type validation:** schemas provide type information, but the implementation checks the number of arguments, not whether a payload is an instance of the declared type.
+- **No exhaustiveness guarantees:** unlike Rust, Python does not require every variant to appear in a `match` statement.
+- **No automatic type narrowing by variant:** a successful `case` does not, by itself, ensure static type checkers will infer a more specific payload type.
