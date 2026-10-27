@@ -3,8 +3,8 @@ on:
   push:
 
 permissions:
-  contents: read
-  code-quality: write
+  checks: write
+  pull-requests: write
 
 jobs:
   check:
@@ -36,10 +36,9 @@ jobs:
           - name: Run pytest
             run: uv run pytest --cov=. --cov-report=xml
 
-      - name: Upload coverage report
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/upload-code-coverage@v1
+      - name: Publish unit tests results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: (!cancelled())
         with:
-          file: coverage.xml
-          language: Python
-          label: code-coverage/pytest
+          files: |
+            coverage.xml
