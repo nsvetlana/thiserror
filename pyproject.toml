@@ -1,6 +1,6 @@
 [project]
 name = "thiserror"
-version = "0.1.1"
+version = "0.1.2"
 description = "Define typed Python error variants with pattern matching and customizable messages."
 readme = "README.md"
 authors = [
