@@ -34,11 +34,20 @@ jobs:
             run: uv run zuban check .
 
           - name: Run pytest
-            run: uv run pytest --cov=. --cov-report=xml
+            run: uv run pytest --cov=. --cov-report=xml --junit-xml=pytest.xml
 
       - name: Publish unit tests results
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: (!cancelled())
+        background: true
         with:
           files: |
-            coverage.xml
+            pytest.xml
+
+      - name: Pytest coverage comment
+        uses: MishaKav/pytest-coverage-comment@v1
+        if: (!cancelled())
+        background: true
+        with:
+          pytest-xml-coverage-path: coverage.xml
+          junitxml-path: pytest.xml
