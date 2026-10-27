@@ -20,8 +20,7 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Parallel
-        parallel:
+      - parallel:
           - name: Run ruff check
             run: uv run ruff check --output-format=github .
 
