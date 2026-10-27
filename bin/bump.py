@@ -16,11 +16,7 @@ def main() -> None:
         check=True,
     ).stdout.strip()
 
-    git_chain = (
-        "git add pyproject.toml uv.lock && "
-        f'git commit -m "{version}" && '
-        f'git tag "v{version}"'
-    )
+    git_chain = f'git add pyproject.toml uv.lock && git commit -m "{version}" && git tag "v{version}"'
     subprocess.run(git_chain, shell=True, check=True)
 
 
